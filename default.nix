@@ -1,7 +1,7 @@
 { mkDerivation, lib, c2hs, base }:
 mkDerivation {
   pname = "monocypher";
-  version = "4.0.0.0";
+  version = "4.0.0.1";
   src = lib.sources.cleanSource ./.;
   libraryToolDepends = [ c2hs ];
   libraryHaskellDepends = [ base ];
