@@ -26,6 +26,9 @@
 -- of wrapping them in different structures like the C @crypto_argon2@ version
 -- does. Also, the necessary @work_area@ is allocated automatically.
 --
+-- * The 'eddsa_key_pair', 'ed25519_key_pair' and 'elligator_key_pair' functions
+-- don't wipe the passed in @seed@ value. Their C counterparts do.
+--
 -- * The @crypto_aead_ctx@, @crypto_blake2b@ and @crypto_poly1305_ctx@ C
 -- structures are opaque, represented in Haskell by 'AEAD_CTX',
 -- 'BLAKE2B_CTX', etc.  They can be allocated with 'aead_ctx_malloc',
@@ -156,6 +159,10 @@ module Monocypher.C {--}
  , X25519_PUBLIC_KEY_SIZE
  , X25519_SECRET_KEY_SIZE
  , X25519_SHARED_SECRET_SIZE
+ , ED25519_SECRET_KEY_SIZE
+ , ED25519_PUBLIC_KEY_SIZE
+ , ED25519_SEED_SIZE
+ , ED25519_SIGNATURE_SIZE
  , EDDSA_POINT_SIZE
  , EDDSA_PUBLIC_KEY_SIZE
  , EDDSA_SECRET_KEY_SIZE
@@ -184,7 +191,9 @@ module Monocypher.C {--}
  where
 
 import Data.Bits (toIntegralSized)
+import Data.Proxy
 import Data.Word (Word8, Word32, Word64)
+import GHC.TypeNats (natVal)
 import Foreign.Ptr (Ptr)
 import Foreign.C.Types (CInt(..), CSize(..))
 import Foreign.Marshal.Array (copyArray)
@@ -554,10 +563,11 @@ eddsa_key_pair
   -> Ptr Word8 -- ^ @uint8_t __public_key__['EDDSA_PUBLIC_KEY_SIZE']@.
   -> Ptr Word8 -- ^ @const uint8_t __seed__['EDDSA_SEED_SIZE']@.
   -> IO ()
-eddsa_key_pair hidden secret seed0 =
+eddsa_key_pair hidden secret seed0 = do
+  let seedSize = fromIntegral (natVal (Proxy @EDDSA_SEED_SIZE))
   -- _crypto_eddsa_key_pair wipes the seed, so we pass a copy instead.
-  allocaBytes 32 $ \seed1 -> do
-    copyBytes seed1 seed0 32
+  allocaBytes seedSize $ \seed1 -> do
+    copyBytes seed1 seed0 seedSize
     _eddsa_key_pair hidden secret seed1
 
 foreign import capi unsafe "monocypher.h crypto_eddsa_key_pair"
@@ -771,10 +781,11 @@ elligator_key_pair
   -> Ptr Word8 -- ^ @uint8_t __secret_key__['X25519_SECRET_KEY_SIZE']@.
   -> Ptr Word8 -- ^ @const uint8_t __seed__['ELLIGATOR_SEED_SIZE']@.
   -> IO ()
-elligator_key_pair hidden secret seed0 =
+elligator_key_pair hidden secret seed0 = do
+  let seedSize = fromIntegral (natVal (Proxy @ELLIGATOR_SEED_SIZE))
   -- _crypto_elligator_key_pair wipes the seed, so we pass a copy instead.
-  allocaBytes 32 $ \seed1 -> do
-    copyBytes seed1 seed0 32
+  allocaBytes seedSize $ \seed1 -> do
+    copyBytes seed1 seed0 seedSize
     _elligator_key_pair hidden secret seed1
 
 foreign import capi unsafe "monocypher.h crypto_elligator_key_pair"
@@ -950,18 +961,34 @@ foreign import capi unsafe "monocypher-ed25519.h crypto_sha512_hkdf"
 -- EdDSA on Curve25519 using SHA512 as hash algorithm.
 
 -- | See [@crypto_ed5519_key_pair()@](https://monocypher.org/manual/ed25519).
+--
+-- Contrary to the C version of @crypto_ed25519_key_pair()@, this version
+-- does not 'wipe' the passed in @seed@.
+ed25519_key_pair
+  :: Ptr Word8 -- ^ @uint8_t __secret_key__['ED25519_SECRET_KEY_SIZE']@.
+  -> Ptr Word8 -- ^ @uint8_t __public_key__['ED25519_PUBLIC_KEY_SIZE']@.
+  -> Ptr Word8 -- ^ @uint8_t __seed__['ED25519_SEED_SIZE']@.
+  -> IO ()
+ed25519_key_pair secret_key public_key seed0 = do
+  let seedSize = fromIntegral (natVal (Proxy @ED25519_SEED_SIZE))
+  -- _crypto_ed25519_key_pair wipes the seed, so we pass a copy instead.
+  allocaBytes seedSize $ \seed1 -> do
+    copyBytes seed1 seed0 seedSize
+    _ed25519_key_pair secret_key public_key seed1
+
+-- | See [@crypto_ed5519_key_pair()@](https://monocypher.org/manual/ed25519).
 foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_key_pair"
-  ed25519_key_pair
-    :: Ptr Word8 -- ^ @uint8_t __secret_key__[64]@.
-    -> Ptr Word8 -- ^ @uint8_t __public_key__[32]@.
-    -> Ptr Word8 -- ^ @uint8_t __seed__[32]@.
+  _ed25519_key_pair
+    :: Ptr Word8 -- ^ @uint8_t __secret_key__['ED25519_SECRET_KEY_SIZE']@.
+    -> Ptr Word8 -- ^ @uint8_t __public_key__['ED25519_PUBLIC_KEY_SIZE']@.
+    -> Ptr Word8 -- ^ @uint8_t __seed__['ED25519_SEED_SIZE']@.
     -> IO ()
 
 -- | See [@crypto_ed5519_sing()@](https://monocypher.org/manual/ed25519).
 foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_sign"
   ed25519_sign
-    :: Ptr Word8 -- ^ @uint8_t __signature__[64]@.
-    -> Ptr Word8 -- ^ @const uint8_t __secret_key__[32]@.
+    :: Ptr Word8 -- ^ @uint8_t __signature__['ED25519_SIGNATURE_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __secret_key__['ED25519_SECRET_KEY_SIZE']@.
     -> Ptr Word8 -- ^ @const uint8_t * __message__@.
     -> CSize     -- ^ @size_t __message_size__@.
     -> IO ()
@@ -969,8 +996,8 @@ foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_sign"
 -- | See [@crypto_ed5519_check()@](https://monocypher.org/manual/ed25519).
 foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_check"
   ed25519_check
-    :: Ptr Word8 -- ^ @const uint8_t __signature__[64]@.
-    -> Ptr Word8 -- ^ @const uint8_t __public_key__[32]@.
+    :: Ptr Word8 -- ^ @const uint8_t __signature__['ED25519_SIGNATURE_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __public_key__['ED25519_PUBLIC_KEY_SIZE']@.
     -> Ptr Word8 -- ^ @const uint8_t * __message__@.
     -> CSize     -- ^ @size_t __message_size__@.
     -> IO CInt   -- ^ @0@ if signature is legitimate, @-1@ otherwise.
@@ -987,17 +1014,17 @@ foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_check"
 -- | See [@crypto_ed25519_ph_sign()@](https://monocypher.org/manual/ed25519).
 foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_ph_sign"
   ed25519_ph_sign
-    :: Ptr Word8 -- ^ @uint8_t __signature__[64]@.
-    -> Ptr Word8 -- ^ @const uint8_t __secret_key__[32]@.
-    -> Ptr Word8 -- ^ @const uint8_t __message_hash__[64]@.
+    :: Ptr Word8 -- ^ @uint8_t __signature__['ED25519_SIGNATURE_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __secret_key__['ED25519_SECRET_KEY_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __message_hash__['SHA512_HASH_SIZE']@.
     -> IO ()
 
 -- | See [@crypto_ed25519_ph_check()@](https://monocypher.org/manual/ed25519).
 foreign import capi unsafe "monocypher-ed25519.h crypto_ed25519_ph_check"
   ed25519_ph_check
-    :: Ptr Word8 -- ^ @const uint8_t __signature__[64]@.
-    -> Ptr Word8 -- ^ @const uint8_t __public_key__[32]@.
-    -> Ptr Word8 -- ^ @const uint8_t __message_hash__[64]@.
+    :: Ptr Word8 -- ^ @const uint8_t __signature__['ED25519_SIGNATURE_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __public_key__['ED25519_PUBLIC_KEY_SIZE']@.
+    -> Ptr Word8 -- ^ @const uint8_t __message_hash__['SHA512_HASH_SIZE']@.
     -> IO CInt   -- ^ @0@ if signature is legitimate, @-1@ otherwise.
 
 --------------------------------------------------------------------------------
@@ -1020,6 +1047,11 @@ type X25519_POINT_SIZE = 32
 type X25519_PUBLIC_KEY_SIZE = 32
 type X25519_SECRET_KEY_SIZE = 32
 type X25519_SHARED_SECRET_SIZE = 32
+
+type ED25519_SECRET_KEY_SIZE = 64
+type ED25519_PUBLIC_KEY_SIZE = 32
+type ED25519_SEED_SIZE = 32
+type ED25519_SIGNATURE_SIZE = 64
 
 type EDDSA_POINT_SIZE = 32
 type EDDSA_PUBLIC_KEY_SIZE = 32
